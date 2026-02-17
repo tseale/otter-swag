@@ -279,22 +279,81 @@ function drawScore(score, isTitle) {
   let started = false;
   let digits = 0;
 
+  // Build filled version once: white interior, black outline preserved
+  if (!drawScore._filled && img.complete) {
+    const tmp = document.createElement('canvas');
+    tmp.width = img.width;
+    tmp.height = img.height;
+    const tc = tmp.getContext('2d');
+    // Start fully white
+    tc.fillStyle = '#ffffff';
+    tc.fillRect(0, 0, tmp.width, tmp.height);
+    // Get pixel data and flood-fill exterior (from edges) to transparent
+    const id = tc.getImageData(0, 0, tmp.width, tmp.height);
+    const d = id.data;
+    const w = tmp.width, h = tmp.height;
+    // Draw original to a temp canvas to read which pixels are outline (opaque)
+    const ref = document.createElement('canvas');
+    ref.width = w; ref.height = h;
+    const rc = ref.getContext('2d');
+    rc.drawImage(img, 0, 0);
+    const rd = rc.getImageData(0, 0, w, h).data;
+    // Flood fill from edges: any transparent pixel in original that's reachable
+    // from the border without crossing an opaque pixel gets cleared
+    const visited = new Uint8Array(w * h);
+    const queue = [];
+    // Seed from all border pixels that are transparent in original
+    for (let x = 0; x < w; x++) {
+      if (rd[(x) * 4 + 3] === 0) queue.push(x);
+      if (rd[((h-1)*w + x) * 4 + 3] === 0) queue.push((h-1)*w + x);
+    }
+    for (let y = 0; y < h; y++) {
+      if (rd[(y*w) * 4 + 3] === 0) queue.push(y*w);
+      if (rd[(y*w + w-1) * 4 + 3] === 0) queue.push(y*w + w-1);
+    }
+    for (const idx of queue) visited[idx] = 1;
+    let qi = 0;
+    while (qi < queue.length) {
+      const idx = queue[qi++];
+      const px = idx % w, py = (idx - px) / w;
+      // Clear this pixel to transparent
+      d[idx * 4 + 3] = 0;
+      const neighbors = [];
+      if (px > 0) neighbors.push(idx - 1);
+      if (px < w - 1) neighbors.push(idx + 1);
+      if (py > 0) neighbors.push(idx - w);
+      if (py < h - 1) neighbors.push(idx + w);
+      for (const ni of neighbors) {
+        if (!visited[ni] && rd[ni * 4 + 3] === 0) {
+          visited[ni] = 1;
+          queue.push(ni);
+        }
+      }
+    }
+    tc.putImageData(id, 0, 0);
+    // Draw original outlines on top
+    tc.drawImage(img, 0, 0);
+    drawScore._filled = tmp;
+  }
+
+  const src = drawScore._filled || img;
+
+  if (!isTitle) {
+    // Center the score on the final score screen
+    const totalDigits = Math.max(1, Math.floor(Math.log10(Math.max(1, score))) + 1);
+    const totalWidth = totalDigits * DIGIT_SPACING;
+    xPos = Math.floor((GAME_W - totalWidth) / 2);
+  }
+
   for (let i = 6; i > 0; i--) {
     const digit = Math.floor(score / Math.pow(10, i - 1)) % 10;
-    if (started || digit !== 0) {
+    if (started || digit !== 0 || i === 1) {
       const clip = numberClips[digit];
-      if (isTitle) {
-        drawSprite(img, clip, xPos, 0);
-      } else {
-        digits++;
-        const offset = Math.floor((480 - ((digits + 1) * 28)) / 2) - 10;
-        xPos -= offset;
-        drawSprite(img, clip, xPos, 135);
-        xPos += offset;
-      }
+      const destY = isTitle ? 0 : 135;
+      ctx.drawImage(src, clip.x, clip.y, clip.w, clip.h, xPos, destY, clip.w, clip.h);
       started = true;
     }
-    xPos += DIGIT_SPACING;
+    if (started) xPos += DIGIT_SPACING;
   }
 }
 
