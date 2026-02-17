@@ -58,7 +58,11 @@ window.addEventListener('resize', resize);
 const images = {};
 let assetsLoaded = 0;
 const assetList = ['otter', 'missiles', 'coins', 'LoveFish', 'menuScreens', 'numbers', 'background'];
-const totalAssets = assetList.length;
+const audioList = ['swag', 'coin', 'boom', 'powerup'];
+const totalAssets = assetList.length + audioList.length;
+
+const sounds = {};
+let musicStarted = false;
 
 function loadAssets(callback) {
   assetList.forEach(name => {
@@ -75,6 +79,36 @@ function loadAssets(callback) {
     };
     img.src = 'assets/' + name + '.png';
   });
+  audioList.forEach(name => {
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.oncanplaythrough = () => {
+      sounds[name] = audio;
+      assetsLoaded++;
+      if (assetsLoaded === totalAssets) callback();
+    };
+    audio.onerror = () => {
+      console.error('Failed to load: assets/' + name + '.mp3');
+      assetsLoaded++;
+      if (assetsLoaded === totalAssets) callback();
+    };
+    if (name === 'swag') audio.loop = true;
+    audio.src = 'assets/' + name + '.mp3';
+  });
+}
+
+function playSound(name) {
+  if (!sounds[name]) return;
+  const s = sounds[name].cloneNode();
+  s.volume = 0.5;
+  s.play().catch(() => {});
+}
+
+function startMusic() {
+  if (musicStarted || !sounds.swag) return;
+  musicStarted = true;
+  sounds.swag.volume = 0.4;
+  sounds.swag.play().catch(() => {});
 }
 
 // --- SPRITE CLIP DEFINITIONS (exact from C++ source) ---
@@ -343,6 +377,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault();
     pressing = true;
+    startMusic();
     if (gameState === STATE_MENU) startGame();
   }
 });
@@ -355,6 +390,7 @@ document.addEventListener('keyup', (e) => {
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   pressing = true;
+  startMusic();
   if (gameState === STATE_MENU) startGame();
 }, { passive: false });
 canvas.addEventListener('touchend', (e) => {
@@ -365,6 +401,7 @@ canvas.addEventListener('touchcancel', () => { pressing = false; });
 
 canvas.addEventListener('mousedown', () => {
   pressing = true;
+  startMusic();
   if (gameState === STATE_MENU) startGame();
 });
 canvas.addEventListener('mouseup', () => { pressing = false; });
@@ -430,10 +467,12 @@ function update() {
             ob.status = 1;
             ob.hasCollided = true;
             score += 100;
+            playSound('coin');
           } else if (ob.type === 'missile') {
             ob.status = 1;
             ob.frame = 0;
             ob.hasCollided = true;
+            playSound('boom');
             if (otter.status !== 3) {
               otter.isDead = true;
               otter.isVisible = false;
@@ -447,6 +486,7 @@ function update() {
             otter.status = 3;
             otter.frame = 0;
             invincibleCheck = 0;
+            playSound('powerup');
           }
         }
       }
