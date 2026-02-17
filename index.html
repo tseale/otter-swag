@@ -275,9 +275,9 @@ function drawScore(score, isTitle) {
   if (!img) return;
 
   const DIGIT_SPACING = 28;
-  let xPos = GAME_W - (DIGIT_SPACING * 6);
+  const totalDigits = score > 0 ? Math.floor(Math.log10(score)) + 1 : 1;
+  let xPos;
   let started = false;
-  let digits = 0;
 
   // Build filled version once: white interior, black outline preserved
   if (!drawScore._filled && img.complete) {
@@ -338,11 +338,13 @@ function drawScore(score, isTitle) {
 
   const src = drawScore._filled || img;
 
-  if (!isTitle) {
+  if (isTitle) {
+    // Right-align score during gameplay
+    const padding = 10;
+    xPos = GAME_W - (totalDigits * DIGIT_SPACING) - padding;
+  } else {
     // Center the score on the final score screen
-    const totalDigits = Math.max(1, Math.floor(Math.log10(Math.max(1, score))) + 1);
-    const totalWidth = totalDigits * DIGIT_SPACING;
-    xPos = Math.floor((GAME_W - totalWidth) / 2);
+    xPos = Math.floor((GAME_W - totalDigits * DIGIT_SPACING) / 2);
   }
 
   for (let i = 6; i > 0; i--) {
@@ -586,9 +588,7 @@ function draw() {
 
   if (gameState === STATE_MENU) {
     drawMenu(hasPlayed);
-    if (!hasPlayed) {
-      drawScore(0, false);
-    } else {
+    if (hasPlayed) {
       drawScore(score, false);
     }
   } else {
