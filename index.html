@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Otter Swag</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #0a1628;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas {
+  display: block;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  image-rendering: pixelated;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// Otter Swag - Web Edition
+// Original by Taylor Seale, Ryan Shea, Andrew Caron, Iheanyi Ekechukwu
+// Web port preserving original game mechanics
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Original game dimensions
+const GAME_W = 480;
+const GAME_H = 320;
+const FPS = 10;
+
+canvas.width = GAME_W;
+canvas.height = GAME_H;
+
+// Scale canvas to fit screen
+function resize() {
+  const scaleX = window.innerWidth / GAME_W;
+  const scaleY = window.innerHeight / GAME_H;
+  const scale = Math.min(scaleX, scaleY);
+  canvas.style.width = (GAME_W * scale) + 'px';
+  canvas.style.height = (GAME_H * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- DRAWING HELPERS ---
+
+function drawOtter(x, y, status, frame, invincibleFlash) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (status === 3) { // ROLL / invincible
+    // Rotating otter ball
+    const angle = (frame / 4) * Math.PI * 2;
+    ctx.translate(16, 16);
+    ctx.rotate(angle);
+    // Glowing effect
+    ctx.shadowColor = '#ffdd44';
+    ctx.shadowBlur = 8;
+    // Body
+    ctx.fillStyle = '#8B6914';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 14, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Belly
+    ctx.fillStyle = '#D4A843';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 9, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  } else if (status === 0) { // SPRITE_DOWN / falling
+    // Body
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(4, 4, 24, 20);
+    // Head
+    ctx.beginPath();
+    ctx.arc(8, 10, 8, 0, Math.PI * 2);
+    ctx.fill();
+    // Belly
+    ctx.fillStyle = '#D4A843';
+    ctx.fillRect(8, 10, 18, 12);
+    // Eye
+    ctx.fillStyle = '#000';
+    ctx.fillRect(4, 8, 2, 2);
+    // Tail
+    ctx.fillStyle = '#6B4F12';
+    ctx.fillRect(24, 8, 8, 4);
+    // Paws tucked
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(10, 22, 4, 4);
+    ctx.fillRect(20, 22, 4, 4);
+  } else if (status === 1) { // SPRITE_UP / swimming up
+    // Body angled up
+    ctx.fillStyle = '#8B6914';
+    ctx.save();
+    ctx.translate(16, 16);
+    ctx.rotate(-0.3);
+    ctx.fillRect(-12, -10, 24, 18);
+    // Belly
+    ctx.fillStyle = '#D4A843';
+    ctx.fillRect(-8, -4, 16, 10);
+    ctx.restore();
+    // Head
+    ctx.fillStyle = '#8B6914';
+    ctx.beginPath();
+    ctx.arc(6, 8, 8, 0, Math.PI * 2);
+    ctx.fill();
+    // Eye
+    ctx.fillStyle = '#000';
+    ctx.fillRect(3, 6, 2, 2);
+    // Tail
+    ctx.fillStyle = '#6B4F12';
+    ctx.fillRect(26, 14, 6, 3);
+    // Flipper animation
+    ctx.fillStyle = '#8B6914';
+    const fy = frame === 0 ? 22 : 18;
+    ctx.fillRect(12, fy, 5, 4);
+    ctx.fillRect(20, fy + 2, 5, 4);
+  } else if (status === 2) { // SPRITE_WALK
+    // Body on ground
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(4, 14, 24, 14);
+    // Head
+    ctx.beginPath();
+    ctx.arc(8, 18, 7, 0, Math.PI * 2);
+    ctx.fill();
+    // Belly
+    ctx.fillStyle = '#D4A843';
+    ctx.fillRect(8, 18, 18, 8);
+    // Eye
+    ctx.fillStyle = '#000';
+    ctx.fillRect(4, 16, 2, 2);
+    // Legs walking
+    ctx.fillStyle = '#6B4F12';
+    const legOff = frame === 0 ? 0 : 3;
+    ctx.fillRect(10 + legOff, 27, 4, 5);
+    ctx.fillRect(22 - legOff, 27, 4, 5);
+    // Tail
+    ctx.fillRect(26, 16, 6, 3);
+  }
+  ctx.restore();
+}
+
+function drawMissile(x, y, status, frame) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (status === 0) { // SHOOT
+    // Missile body
+    ctx.fillStyle = '#cc2222';
+    ctx.fillRect(0, 0, 30, 8);
+    // Nose cone
+    ctx.fillStyle = '#ff4444';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-6, 4);
+    ctx.lineTo(0, 8);
+    ctx.fill();
+    // Fins
+    ctx.fillStyle = '#aa1111';
+    ctx.fillRect(24, -3, 6, 3);
+    ctx.fillRect(24, 8, 6, 3);
+    // Exhaust flame
+    ctx.fillStyle = frame === 0 ? '#ff8800' : '#ffcc00';
+    ctx.beginPath();
+    ctx.moveTo(30, 1);
+    ctx.lineTo(30 + (frame === 0 ? 8 : 12), 4);
+    ctx.lineTo(30, 7);
+    ctx.fill();
+  } else { // EXPLODE
+    const progress = Math.min(frame / 12, 1);
+    const radius = 10 + progress * 35;
+    const alpha = 1 - progress;
+    // Outer blast
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.fillStyle = '#ff4400';
+    ctx.beginPath();
+    ctx.arc(0, 4, radius, 0, Math.PI * 2);
+    ctx.fill();
+    // Inner blast
+    ctx.globalAlpha = alpha * 0.8;
+    ctx.fillStyle = '#ffaa00';
+    ctx.beginPath();
+    ctx.arc(0, 4, radius * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+    // Core
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffee88';
+    ctx.beginPath();
+    ctx.arc(0, 4, radius * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function drawCoin(x, y, status, frame) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (status === 0) { // SPIN
+    // Simulate spinning by varying width
+    const widths = [7, 6, 5, 4, 2, 4, 5, 6, 7, 8];
+    const w = widths[frame];
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.ellipse(7, 8, w, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#DAA520';
+    ctx.beginPath();
+    ctx.ellipse(7, 8, w * 0.6, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Shine
+    if (w > 4) {
+      ctx.fillStyle = '#FFF8DC';
+      ctx.beginPath();
+      ctx.ellipse(5, 5, 1.5, 1.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else { // SCORE - show "+100"
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('+100', -4, 8);
+  }
+  ctx.restore();
+}
+
+function drawFish(x, y, status, frame) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (status === 0) { // SWIM
+    const wobble = Math.sin(frame * 1.2) * 3;
+    ctx.translate(0, wobble);
+    // Body
+    ctx.fillStyle = '#FF69B4';
+    ctx.beginPath();
+    ctx.ellipse(15, 9, 13, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Tail
+    ctx.fillStyle = '#FF1493';
+    ctx.beginPath();
+    ctx.moveTo(26, 9);
+    ctx.lineTo(33, 2);
+    ctx.lineTo(33, 16);
+    ctx.closePath();
+    ctx.fill();
+    // Eye
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(7, 7, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(6, 7, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Star sparkle (power-up indicator)
+    ctx.fillStyle = '#FFD700';
+    ctx.font = '8px sans-serif';
+    ctx.fillText('\u2605', 10 + (frame % 3) * 2, -2);
+  }
+  ctx.restore();
+}
+
+// --- BACKGROUND ---
+let bgOffset = 0;
+
+function drawBackground() {
+  // Water gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  grad.addColorStop(0, '#1a3a5c');
+  grad.addColorStop(0.15, '#1a4a6c');
+  grad.addColorStop(1, '#0a2040');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+  // Surface shimmer
+  ctx.strokeStyle = 'rgba(100, 180, 255, 0.15)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    for (let x = -20; x <= GAME_W + 20; x += 10) {
+      const y = 15 + i * 5 + Math.sin((x + bgOffset * 3) * 0.03 + i) * 3;
+      x === -20 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Bubbles (decorative, scrolling)
+  ctx.fillStyle = 'rgba(150, 210, 255, 0.12)';
+  for (let i = 0; i < 12; i++) {
+    const bx = ((i * 97 + bgOffset * 0.5) % (GAME_W + 40)) - 20;
+    const by = 60 + (i * 43) % 240;
+    const br = 3 + (i % 4) * 2;
+    ctx.beginPath();
+    ctx.arc(bx, by, br, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Sandy bottom
+  const sandGrad = ctx.createLinearGradient(0, GAME_H - 30, 0, GAME_H);
+  sandGrad.addColorStop(0, 'rgba(194, 155, 97, 0)');
+  sandGrad.addColorStop(0.3, 'rgba(194, 155, 97, 0.3)');
+  sandGrad.addColorStop(1, 'rgba(160, 120, 60, 0.5)');
+  ctx.fillStyle = sandGrad;
+  ctx.fillRect(0, GAME_H - 30, GAME_W, 30);
+
+  // Seaweed
+  ctx.fillStyle = 'rgba(30, 100, 40, 0.4)';
+  for (let i = 0; i < 8; i++) {
+    const sx = ((i * 71 + bgOffset * 0.3) % (GAME_W + 60)) - 30;
+    const sway = Math.sin((bgOffset * 0.05) + i) * 4;
+    ctx.beginPath();
+    ctx.moveTo(sx, GAME_H);
+    ctx.quadraticCurveTo(sx + sway, GAME_H - 25, sx + sway * 0.5, GAME_H - 35 - (i % 3) * 10);
+    ctx.quadraticCurveTo(sx + sway, GAME_H - 25, sx + 6, GAME_H);
+    ctx.fill();
+  }
+}
+
+// --- GAME STATE ---
+const STATE_MENU = 0;
+const STATE_PLAYING = 1;
+const STATE_DEAD = 2;
+
+let gameState = STATE_MENU;
+let hasPlayed = false;
+let pressing = false; // spacebar or touch
+
+// Otter state
+let otter = {};
+// Obstacles array
+let obstacles = [];
+// Score
+let score = 0;
+// Difficulty
+let obstacleScore = 0;
+let obstacleTimer = 0;
+let obstacleSpawnRate = 0;
+let obstacleAmplitude = 50.0;
+let obstacleIntercept = 50.0;
+let invincibleCheck = 0;
+let expertMode = false;
+// Death
+let explodeCount = 0;
+
+function resetGame() {
+  otter = {
+    x: 50, y: -35,
+    vy: 16, // falling by default (width/2 = 32/2 = 16)
+    status: 0, // SPRITE_DOWN
+    frame: 0,
+    isStarting: true,
+    isVisible: true,
+    isDead: false,
+    width: 32, height: 32
+  };
+  obstacles = [];
+  score = 0;
+  obstacleScore = 0;
+  obstacleTimer = 0;
+  obstacleSpawnRate = 0;
+  obstacleAmplitude = 50.0;
+  obstacleIntercept = 50.0;
+  invincibleCheck = 0;
+  expertMode = false;
+  explodeCount = 0;
+}
+
+function startGame() {
+  resetGame();
+  gameState = STATE_PLAYING;
+}
+
+// --- INPUT ---
+// Track press state (not events) to match original SDL key-down/key-up behavior
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    pressing = true;
+    if (gameState === STATE_MENU) startGame();
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' || e.key === ' ') {
+    pressing = false;
+  }
+});
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  pressing = true;
+  if (gameState === STATE_MENU) startGame();
+}, { passive: false });
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  pressing = false;
+}, { passive: false });
+canvas.addEventListener('touchcancel', (e) => {
+  pressing = false;
+});
+
+// Mouse support too
+canvas.addEventListener('mousedown', (e) => {
+  pressing = true;
+  if (gameState === STATE_MENU) startGame();
+});
+canvas.addEventListener('mouseup', (e) => {
+  pressing = false;
+});
+
+// --- GAME LOOP ---
+function update() {
+  if (gameState === STATE_PLAYING) {
+    // Otter velocity from input (matches original: space down = -16, space up = +16)
+    if (!otter.isDead) {
+      otter.vy = pressing ? -16 : 16;
+    }
+
+    // Otter movement
+    if (otter.isStarting) {
+      otter.y += 16;
+      if (otter.y > 20) otter.isStarting = false;
+    } else if (!otter.isDead) {
+      otter.y += otter.vy;
+      // Bounds check (matches original: y >= 20 and y + height <= SCREEN_HEIGHT)
+      if (otter.y < 20 || otter.y + otter.height > GAME_H) {
+        otter.y -= otter.vy;
+      }
+    }
+
+    // Difficulty (matches original sinusoidal system)
+    if (expertMode) {
+      obstacleSpawnRate = 25 * Math.sin(obstacleTimer) + 375;
+    } else {
+      obstacleSpawnRate = obstacleAmplitude * Math.sin(obstacleTimer) + obstacleIntercept;
+      if (obstacleSpawnRate > 400) expertMode = true;
+      if (score > obstacleScore + 1000) {
+        obstacleAmplitude = 50;
+        obstacleIntercept += 10;
+        obstacleScore = score;
+      }
+      obstacleAmplitude -= 0.1;
+    }
+    obstacleTimer += 0.1;
+
+    // Spawn missiles
+    if (Math.random() * 1000 < obstacleSpawnRate) {
+      const randY = Math.floor(Math.random() * 11) * 24 + 50;
+      obstacles.push({ type: 'missile', x: GAME_W, y: randY, vx: 20, status: 0, frame: 0, hasCollided: false });
+    }
+    // Spawn coins
+    if (Math.random() * 1000 < 50) {
+      const randX = Math.floor(Math.random() * 400) + 100;
+      obstacles.push({ type: 'coin', x: randX, y: -50, vx: 0, vy: 7, status: 0, frame: 0, hasCollided: false });
+    }
+    // Spawn fish (rare)
+    if (Math.random() * 1000 < 3) {
+      const randY = Math.floor(Math.random() * 10) * 25 + 50;
+      obstacles.push({ type: 'fish', x: GAME_W, y: randY, vx: 10, status: 0, frame: 0, hasCollided: false });
+    }
+
+    // Collision detection & movement
+    for (let i = 0; i < obstacles.length; i++) {
+      const ob = obstacles[i];
+      if (!otter.isDead && !ob.hasCollided) {
+        // AABB collision (matches original obstacle hitbox: 24w x 10h)
+        const obLeft = ob.x, obRight = ob.x + 24, obTop = ob.y, obBottom = ob.y + 10;
+        const otLeft = otter.x, otRight = otter.x + 32, otTop = otter.y + 1, otBottom = otter.y + 31;
+
+        if (otRight > obLeft && otLeft < obRight && otBottom > obTop && otTop < obBottom) {
+          if (ob.type === 'coin') {
+            ob.vy = 0;
+            ob.status = 1;
+            ob.hasCollided = true;
+            score += 100;
+          } else if (ob.type === 'missile') {
+            ob.status = 1; // EXPLODE
+            ob.frame = 0;
+            ob.hasCollided = true;
+            if (otter.status !== 3) { // not invincible
+              otter.isDead = true;
+              otter.isVisible = false;
+              explodeCount = 0;
+            } else {
+              score += 200;
+            }
+          } else if (ob.type === 'fish') {
+            ob.status = 1;
+            ob.hasCollided = true;
+            otter.status = 3; // ROLL
+            otter.frame = 0;
+            invincibleCheck = 0;
+          }
+        }
+      }
+
+      // Move obstacles
+      if (ob.type === 'missile') {
+        ob.x -= ob.vx;
+      } else if (ob.type === 'coin') {
+        if (ob.y < 298) ob.y += (ob.vy || 0);
+        else ob.vy = 0;
+        if (ob.y > 50) {
+          ob.x -= 10;
+        }
+      } else if (ob.type === 'fish') {
+        ob.x -= ob.vx;
+      }
+    }
+
+    // Invincibility timer (score-based, matches original: 2000 points duration)
+    if (otter.status === 3) {
+      if (invincibleCheck === 0) invincibleCheck = score + 2000;
+      else if (score >= invincibleCheck) {
+        otter.status = 0; // back to normal
+      }
+    }
+
+    // Increment score
+    score += 7;
+
+    // Clean up off-screen obstacles
+    obstacles = obstacles.filter(ob => ob.x > -80 && ob.y < GAME_H + 50);
+
+    // Death counter
+    if (otter.isDead) {
+      explodeCount++;
+      if (explodeCount >= 13) {
+        gameState = STATE_MENU;
+        hasPlayed = true;
+        pressing = false; // prevent instant restart
+      }
+    }
+  }
+
+  // Scroll background
+  bgOffset += 10;
+}
+
+function draw() {
+  drawBackground();
+
+  if (gameState === STATE_MENU) {
+    // Draw menu screen
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+    ctx.textAlign = 'center';
+
+    // Title
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('OTTER SWAG', GAME_W / 2, 110);
+
+    // Subtitle
+    ctx.fillStyle = '#88ccff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('An underwater adventure', GAME_W / 2, 140);
+
+    // Draw a little otter on the menu
+    drawOtter(GAME_W / 2 - 16, 160, 1, Math.floor(bgOffset / 10) % 2, false);
+
+    // Instructions
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '18px sans-serif';
+    if (hasPlayed) {
+      ctx.fillStyle = '#ff8888';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText('GAME OVER', GAME_W / 2, 220);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '16px sans-serif';
+      ctx.fillText('Score: ' + score, GAME_W / 2, 245);
+    }
+
+    ctx.fillStyle = '#aaddff';
+    ctx.font = '16px sans-serif';
+    const action = 'ontouchstart' in window ? 'TAP' : 'PRESS SPACE';
+    ctx.fillText(action + ' TO ' + (hasPlayed ? 'PLAY AGAIN' : 'START'), GAME_W / 2, 280);
+
+    // Controls hint
+    ctx.fillStyle = 'rgba(170, 200, 255, 0.6)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Hold to swim up \u2022 Release to sink \u2022 Collect coins \u2022 Avoid missiles', GAME_W / 2, 305);
+
+    ctx.textAlign = 'left';
+  } else {
+    // Draw obstacles (behind otter)
+    for (const ob of obstacles) {
+      if (ob.type === 'missile') drawMissile(ob.x, ob.y, ob.status, ob.frame);
+      else if (ob.type === 'coin') drawCoin(ob.x, ob.y, ob.status, ob.frame);
+      else if (ob.type === 'fish') drawFish(ob.x, ob.y, ob.status, ob.frame);
+    }
+
+    // Otter
+    if (otter.isVisible) {
+      // Otter animation status
+      let drawStatus = otter.status;
+      if (otter.status !== 3) {
+        if (otter.vy > 0) {
+          drawStatus = otter.y > 280 ? 2 : 0; // WALK or DOWN
+        } else if (otter.vy < 0) {
+          drawStatus = 1; // UP
+        }
+      }
+      otter.frame = (otter.frame + 1) % (otter.status === 3 ? 4 : 2);
+      drawOtter(otter.x, otter.y, drawStatus, otter.frame, false);
+    }
+
+    // Advance obstacle animation frames
+    for (const ob of obstacles) {
+      if (ob.type === 'missile') {
+        if (ob.status === 0) ob.frame = (ob.frame + 1) % 2;
+        else if (ob.frame < 12) ob.frame++;
+      } else if (ob.type === 'coin') {
+        if (ob.status === 0) ob.frame = (ob.frame + 1) % 10;
+      } else if (ob.type === 'fish') {
+        if (ob.status === 0) ob.frame = (ob.frame + 1) % 5;
+      }
+    }
+
+    // Score display
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 22px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(score.toString(), GAME_W - 10, 24);
+    ctx.textAlign = 'left';
+
+    // Invincibility indicator
+    if (otter.status === 3 && invincibleCheck > 0) {
+      const remaining = Math.max(0, invincibleCheck - score);
+      const pct = remaining / 2000;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(10, 6, 80, 8);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillRect(10, 6, 80 * pct, 8);
+      ctx.strokeStyle = '#FFD700';
+      ctx.strokeRect(10, 6, 80, 8);
+    }
+
+    // Death flash
+    if (otter.isDead && explodeCount < 5) {
+      ctx.fillStyle = 'rgba(255, 100, 0, ' + (0.3 - explodeCount * 0.06) + ')';
+      ctx.fillRect(0, 0, GAME_W, GAME_H);
+    }
+  }
+}
+
+// Main loop at original 10 FPS
+setInterval(() => {
+  update();
+  draw();
+}, 1000 / FPS);
+</script>
+</body>
+</html>
