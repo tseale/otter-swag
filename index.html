@@ -58,9 +58,9 @@ window.addEventListener('resize', resize);
 const images = {};
 let assetsLoaded = 0;
 const assetList = ['otter', 'missiles', 'coins', 'LoveFish', 'menuScreens', 'numbers', 'background'];
-const audioList = ['swag', 'coin', 'boom', 'powerup'];
-const totalAssets = assetList.length + audioList.length;
+const totalAssets = assetList.length;
 
+// Audio loaded separately (non-blocking) so it doesn't hold up the game
 const sounds = {};
 let musicStarted = false;
 
@@ -79,35 +79,32 @@ function loadAssets(callback) {
     };
     img.src = 'assets/' + name + '.png';
   });
-  audioList.forEach(name => {
+
+  // Load audio in the background - don't block game start
+  ['coin', 'boom', 'powerup'].forEach(name => {
     const audio = new Audio();
     audio.preload = 'auto';
-    audio.oncanplaythrough = () => {
-      sounds[name] = audio;
-      assetsLoaded++;
-      if (assetsLoaded === totalAssets) callback();
-    };
-    audio.onerror = () => {
-      console.error('Failed to load: assets/' + name + '.mp3');
-      assetsLoaded++;
-      if (assetsLoaded === totalAssets) callback();
-    };
-    if (name === 'swag') audio.loop = true;
     audio.src = 'assets/' + name + '.mp3';
+    sounds[name] = audio;
   });
+  const music = new Audio();
+  music.preload = 'auto';
+  music.loop = true;
+  music.src = 'assets/swag.mp3';
+  sounds.swag = music;
 }
 
 function playSound(name) {
   if (!sounds[name]) return;
   const s = sounds[name].cloneNode();
-  s.volume = 0.5;
+  s.volume = 0.6;
   s.play().catch(() => {});
 }
 
 function startMusic() {
   if (musicStarted || !sounds.swag) return;
   musicStarted = true;
-  sounds.swag.volume = 0.4;
+  sounds.swag.volume = 0.5;
   sounds.swag.play().catch(() => {});
 }
 
