@@ -523,6 +523,7 @@ function update() {
           if (ob.type === 'coin') {
             ob.vy = 0;
             ob.status = 1;
+            ob.frame = 0;
             ob.hasCollided = true;
             score += 100;
             playSound('coin');
