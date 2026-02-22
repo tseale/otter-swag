@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Otter Swag</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #0a1628;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas {
+  display: block;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// Otter Swag - Web Edition
+// Original by Taylor Seale, Ryan Shea, Andrew Caron, Iheanyi Ekechukwu
+// Web port using original sprite sheets
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const GAME_W = 480;
+const GAME_H = 320;
+const FPS = 10;
+
+canvas.width = GAME_W;
+canvas.height = GAME_H;
+
+function resize() {
+  const scaleX = window.innerWidth / GAME_W;
+  const scaleY = window.innerHeight / GAME_H;
+  const scale = Math.min(scaleX, scaleY);
+  canvas.style.width = (GAME_W * scale) + 'px';
+  canvas.style.height = (GAME_H * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- ASSET LOADING ---
+const images = {};
+let assetsLoaded = 0;
+const assetList = ['otter', 'missiles', 'coins', 'LoveFish', 'menuScreens', 'numbers', 'background'];
+const totalAssets = assetList.length;
+
+// Audio loaded separately (non-blocking) so it doesn't hold up the game
+const sounds = {};
+let musicStarted = false;
+
+function loadAssets(callback) {
+  assetList.forEach(name => {
+    const img = new Image();
+    img.onload = () => {
+      images[name] = img;
+      assetsLoaded++;
+      if (assetsLoaded === totalAssets) callback();
+    };
+    img.onerror = () => {
+      console.error('Failed to load: assets/' + name + '.png');
+      assetsLoaded++;
+      if (assetsLoaded === totalAssets) callback();
+    };
+    img.src = 'assets/' + name + '.png';
+  });
+
+  // Load audio in the background - don't block game start
+  ['coin', 'boom', 'powerup'].forEach(name => {
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.src = 'assets/' + name + '.mp3';
+    sounds[name] = audio;
+  });
+  const music = new Audio();
+  music.preload = 'auto';
+  music.loop = true;
+  music.src = 'assets/swag.mp3';
+  sounds.swag = music;
+}
+
+function playSound(name) {
+  if (!sounds[name]) return;
+  const s = sounds[name].cloneNode();
+  s.volume = 0.6;
+  s.play().catch(() => {});
+}
+
+function startMusic() {
+  if (musicStarted || !sounds.swag) return;
+  musicStarted = true;
+  sounds.swag.volume = 0.5;
+  sounds.swag.play().catch(() => {});
+}
+
+// --- SPRITE CLIP DEFINITIONS (exact from C++ source) ---
+
+// Otter clips: [state][frame] = {x, y, w, h}
+// State 0=DOWN, 1=UP, 2=WALK, 3=ROLL
+const otterClips = {
+  0: [ // SPRITE_DOWN (swim down / fall)
+    {x:215, y:0, w:33, h:32}, // swim0
+    {x:248, y:0, w:32, h:32}, // swim1
+  ],
+  1: [ // SPRITE_UP (swim up)
+    {x:411, y:0, w:32, h:32}, // fall0
+    {x:411, y:0, w:32, h:32}, // fall1
+  ],
+  2: [ // SPRITE_WALK
+    {x:312, y:0, w:33, h:32}, // walk0
+    {x:345, y:0, w:33, h:32}, // walk1
+  ],
+  3: [ // ROLL (invincible)
+    {x:64,  y:0, w:33, h:32}, // roll0
+    {x:97,  y:0, w:26, h:32}, // roll1
+    {x:123, y:0, w:33, h:32}, // roll2
+    {x:156, y:0, w:26, h:32}, // roll3
+  ]
+};
+
+// Missile clips: [state][frame]
+// State 0=SHOOT, 1=EXPLODE
+const missileClips = {
+  0: [ // SHOOT
+    {x:13, y:16, w:33, h:8},
+    {x:58, y:16, w:32, h:8},
+  ],
+  1: [ // EXPLODE (13 frames)
+    {x:49,  y:67,  w:35,  h:28},
+    {x:148, y:57,  w:52,  h:42},
+    {x:236, y:24,  w:92,  h:78},
+    {x:334, y:24,  w:105, h:78},
+    {x:458, y:32,  w:80,  h:70},
+    {x:568, y:41,  w:76,  h:61},
+    {x:28,  y:124, w:73,  h:62},
+    {x:137, y:124, w:74,  h:62},
+    {x:242, y:117, w:78,  h:69},
+    {x:349, y:117, w:81,  h:70},
+    {x:459, y:117, w:79,  h:69},
+    {x:567, y:117, w:77,  h:69},
+    {x:13,  y:16,  w:0,   h:0},  // invisible
+  ]
+};
+
+// Coin clips: [state][frame]
+// State 0=SPIN, 1=SCORE
+const coinClips = {
+  0: [ // SPIN (10 frames)
+    {x:6,   y:3, w:14, h:16},
+    {x:23,  y:3, w:12, h:16},
+    {x:38,  y:3, w:11, h:16},
+    {x:52,  y:3, w:9,  h:16},
+    {x:65,  y:3, w:4,  h:16},
+    {x:73,  y:3, w:9,  h:16},
+    {x:85,  y:3, w:11, h:16},
+    {x:99,  y:3, w:12, h:16},
+    {x:114, y:3, w:14, h:16},
+    {x:130, y:3, w:16, h:16},
+  ],
+  1: [ // SCORE
+    {x:153, y:7, w:14, h:8},
+    {x:0,   y:0, w:0,  h:0},
+  ]
+};
+
+// Fish clips: [state][frame]
+// State 0=SWIM, 1=EATEN
+const fishClips = {
+  0: [ // SWIM (5 frames)
+    {x:281, y:15, w:31, h:17},
+    {x:241, y:13, w:30, h:18},
+    {x:323, y:10, w:30, h:23},
+    {x:405, y:5,  w:30, h:26},
+    {x:364, y:5,  w:30, h:27},
+  ],
+  1: [ // EATEN
+    {x:0, y:0, w:1, h:1},
+  ]
+};
+
+// Menu clips
+const menuClips = {
+  title:  {x:12,  y:32, w:480, h:320},
+  replay: {x:505, y:32, w:480, h:320},
+};
+
+// Score number clips (digits 0-9)
+const numberClips = [
+  {x:287, y:0, w:21, h:28}, // 0
+  {x:0,   y:0, w:20, h:28}, // 1
+  {x:30,  y:0, w:24, h:28}, // 2
+  {x:62,  y:0, w:23, h:28}, // 3
+  {x:93,  y:0, w:26, h:28}, // 4
+  {x:126, y:0, w:25, h:28}, // 5
+  {x:157, y:0, w:26, h:28}, // 6
+  {x:189, y:0, w:26, h:28}, // 7
+  {x:221, y:0, w:26, h:28}, // 8
+  {x:253, y:0, w:26, h:28}, // 9
+];
+
+// --- DRAWING FUNCTIONS (using sprite sheets) ---
+
+function drawSprite(img, clip, destX, destY) {
+  if (!img || clip.w === 0 || clip.h === 0) return;
+  ctx.drawImage(img, clip.x, clip.y, clip.w, clip.h, destX, destY, clip.w, clip.h);
+}
+
+function drawOtter(x, y, status, frame) {
+  const img = images.otter;
+  if (!img) return;
+  const clips = otterClips[status];
+  if (!clips) return;
+  const clip = clips[frame % clips.length];
+  // Glowing effect for invincible
+  if (status === 3) {
+    ctx.save();
+    ctx.shadowColor = '#ffdd44';
+    ctx.shadowBlur = 10;
+    drawSprite(img, clip, x, y);
+    ctx.restore();
+  } else {
+    drawSprite(img, clip, x, y);
+  }
+}
+
+function drawMissile(x, y, status, frame) {
+  const img = images.missiles;
+  if (!img) return;
+  const clips = missileClips[status];
+  if (!clips) return;
+  const clip = clips[Math.min(frame, clips.length - 1)];
+  // Center explosion on missile position
+  if (status === 1) {
+    drawSprite(img, clip, x - clip.w / 2, y - clip.h / 2);
+  } else {
+    drawSprite(img, clip, x, y);
+  }
+}
+
+function drawCoin(x, y, status, frame) {
+  const img = images.coins;
+  if (!img) return;
+  const clips = coinClips[status];
+  if (!clips) return;
+  const clip = clips[Math.min(frame, clips.length - 1)];
+  drawSprite(img, clip, x, y);
+}
+
+function drawFish(x, y, status, frame) {
+  const img = images.LoveFish;
+  if (!img) return;
+  const clips = fishClips[status];
+  if (!clips) return;
+  const clip = clips[Math.min(frame, clips.length - 1)];
+  drawSprite(img, clip, x, y);
+}
+
+function drawScore(score, isTitle) {
+  const img = images.numbers;
+  if (!img) return;
+
+  const DIGIT_SPACING = 28;
+  const totalDigits = score > 0 ? Math.floor(Math.log10(score)) + 1 : 1;
+  let xPos;
+  let started = false;
+
+  // Build filled version once: white interior, black outline preserved
+  if (!drawScore._filled && img.complete) {
+    const tmp = document.createElement('canvas');
+    tmp.width = img.width;
+    tmp.height = img.height;
+    const tc = tmp.getContext('2d');
+    // Start fully white
+    tc.fillStyle = '#ffffff';
+    tc.fillRect(0, 0, tmp.width, tmp.height);
+    // Get pixel data and flood-fill exterior (from edges) to transparent
+    const id = tc.getImageData(0, 0, tmp.width, tmp.height);
+    const d = id.data;
+    const w = tmp.width, h = tmp.height;
+    // Draw original to a temp canvas to read which pixels are outline (opaque)
+    const ref = document.createElement('canvas');
+    ref.width = w; ref.height = h;
+    const rc = ref.getContext('2d');
+    rc.drawImage(img, 0, 0);
+    const rd = rc.getImageData(0, 0, w, h).data;
+    // Flood fill from edges: any transparent pixel in original that's reachable
+    // from the border without crossing an opaque pixel gets cleared
+    const visited = new Uint8Array(w * h);
+    const queue = [];
+    // Seed from all border pixels that are transparent in original
+    for (let x = 0; x < w; x++) {
+      if (rd[(x) * 4 + 3] === 0) queue.push(x);
+      if (rd[((h-1)*w + x) * 4 + 3] === 0) queue.push((h-1)*w + x);
+    }
+    for (let y = 0; y < h; y++) {
+      if (rd[(y*w) * 4 + 3] === 0) queue.push(y*w);
+      if (rd[(y*w + w-1) * 4 + 3] === 0) queue.push(y*w + w-1);
+    }
+    for (const idx of queue) visited[idx] = 1;
+    let qi = 0;
+    while (qi < queue.length) {
+      const idx = queue[qi++];
+      const px = idx % w, py = (idx - px) / w;
+      // Clear this pixel to transparent
+      d[idx * 4 + 3] = 0;
+      const neighbors = [];
+      if (px > 0) neighbors.push(idx - 1);
+      if (px < w - 1) neighbors.push(idx + 1);
+      if (py > 0) neighbors.push(idx - w);
+      if (py < h - 1) neighbors.push(idx + w);
+      for (const ni of neighbors) {
+        if (!visited[ni] && rd[ni * 4 + 3] === 0) {
+          visited[ni] = 1;
+          queue.push(ni);
+        }
+      }
+    }
+    tc.putImageData(id, 0, 0);
+    // Draw original outlines on top
+    tc.drawImage(img, 0, 0);
+    drawScore._filled = tmp;
+  }
+
+  const src = drawScore._filled || img;
+
+  if (isTitle) {
+    // Right-align score during gameplay
+    const padding = 10;
+    xPos = GAME_W - (totalDigits * DIGIT_SPACING) - padding;
+  } else {
+    // Center the score on the final score screen
+    xPos = Math.floor((GAME_W - totalDigits * DIGIT_SPACING) / 2);
+  }
+
+  for (let i = 6; i > 0; i--) {
+    const digit = Math.floor(score / Math.pow(10, i - 1)) % 10;
+    if (started || digit !== 0 || i === 1) {
+      const clip = numberClips[digit];
+      const destY = isTitle ? 0 : 135;
+      ctx.drawImage(src, clip.x, clip.y, clip.w, clip.h, xPos, destY, clip.w, clip.h);
+      started = true;
+    }
+    if (started) xPos += DIGIT_SPACING;
+  }
+}
+
+function drawMenu(hasPlayed) {
+  const img = images.menuScreens;
+  if (!img) return;
+  const clip = hasPlayed ? menuClips.replay : menuClips.title;
+  drawSprite(img, clip, 0, 0);
+}
+
+// --- BACKGROUND ---
+let bgOffset = 0;
+
+function drawBackground() {
+  const img = images.background;
+  if (!img) {
+    ctx.fillStyle = '#1a3a5c';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    return;
+  }
+  const bw = img.width;
+  const dx = -(bgOffset % bw);
+  ctx.drawImage(img, dx, 0);
+  ctx.drawImage(img, dx + bw, 0);
+}
+
+// --- GAME STATE ---
+const STATE_MENU = 0;
+const STATE_PLAYING = 1;
+
+let gameState = STATE_MENU;
+let hasPlayed = false;
+let pressing = false;
+
+let otter = {};
+let obstacles = [];
+let score = 0;
+let obstacleScore = 0;
+let obstacleTimer = 0;
+let obstacleSpawnRate = 0;
+let obstacleAmplitude = 50.0;
+let obstacleIntercept = 50.0;
+let invincibleCheck = 0;
+let expertMode = false;
+let explodeCount = 0;
+
+function resetGame() {
+  otter = {
+    x: 50, y: -35,
+    vy: 16,
+    status: 0,
+    frame: 0,
+    isStarting: true,
+    isVisible: true,
+    isDead: false,
+    width: 32, height: 32
+  };
+  obstacles = [];
+  score = 0;
+  obstacleScore = 0;
+  obstacleTimer = 0;
+  obstacleSpawnRate = 0;
+  obstacleAmplitude = 50.0;
+  obstacleIntercept = 50.0;
+  invincibleCheck = 0;
+  expertMode = false;
+  explodeCount = 0;
+}
+
+function startGame() {
+  resetGame();
+  gameState = STATE_PLAYING;
+}
+
+// --- INPUT ---
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    pressing = true;
+    startMusic();
+    if (gameState === STATE_MENU) startGame();
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' || e.key === ' ') {
+    pressing = false;
+  }
+});
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  pressing = true;
+  startMusic();
+  if (gameState === STATE_MENU) startGame();
+}, { passive: false });
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  pressing = false;
+}, { passive: false });
+canvas.addEventListener('touchcancel', () => { pressing = false; });
+
+canvas.addEventListener('mousedown', () => {
+  pressing = true;
+  startMusic();
+  if (gameState === STATE_MENU) startGame();
+});
+canvas.addEventListener('mouseup', () => { pressing = false; });
+
+// --- GAME LOOP ---
+function update() {
+  if (gameState === STATE_PLAYING) {
+    if (!otter.isDead) {
+      otter.vy = pressing ? -16 : 16;
+    }
+
+    if (otter.isStarting) {
+      otter.y += 16;
+      if (otter.y > 20) otter.isStarting = false;
+    } else if (!otter.isDead) {
+      otter.y += otter.vy;
+      if (otter.y < 20 || otter.y + otter.height > GAME_H) {
+        otter.y -= otter.vy;
+      }
+    }
+
+    // Difficulty
+    if (expertMode) {
+      obstacleSpawnRate = 25 * Math.sin(obstacleTimer) + 375;
+    } else {
+      obstacleSpawnRate = obstacleAmplitude * Math.sin(obstacleTimer) + obstacleIntercept;
+      if (obstacleSpawnRate > 400) expertMode = true;
+      if (score > obstacleScore + 1000) {
+        obstacleAmplitude = 50;
+        obstacleIntercept += 10;
+        obstacleScore = score;
+      }
+      obstacleAmplitude -= 0.1;
+    }
+    obstacleTimer += 0.1;
+
+    // Spawn missiles
+    if (Math.random() * 1000 < obstacleSpawnRate) {
+      const randY = Math.floor(Math.random() * 11) * 24 + 50;
+      obstacles.push({ type: 'missile', x: GAME_W, y: randY, vx: 20, status: 0, frame: 0, hasCollided: false });
+    }
+    // Spawn coins
+    if (Math.random() * 1000 < 50) {
+      const randX = Math.floor(Math.random() * 400) + 100;
+      obstacles.push({ type: 'coin', x: randX, y: -50, vx: 0, vy: 7, status: 0, frame: 0, hasCollided: false });
+    }
+    // Spawn fish
+    if (Math.random() * 1000 < 3) {
+      const randY = Math.floor(Math.random() * 10) * 25 + 50;
+      obstacles.push({ type: 'fish', x: GAME_W, y: randY, vx: 10, status: 0, frame: 0, hasCollided: false });
+    }
+
+    // Collision detection & movement
+    for (let i = 0; i < obstacles.length; i++) {
+      const ob = obstacles[i];
+      if (!otter.isDead && !ob.hasCollided) {
+        const obLeft = ob.x, obRight = ob.x + 24, obTop = ob.y, obBottom = ob.y + 10;
+        const otLeft = otter.x, otRight = otter.x + 32, otTop = otter.y + 1, otBottom = otter.y + 31;
+
+        if (otRight > obLeft && otLeft < obRight && otBottom > obTop && otTop < obBottom) {
+          if (ob.type === 'coin') {
+            ob.vy = 0;
+            ob.status = 1;
+            ob.frame = 0;
+            ob.hasCollided = true;
+            score += 100;
+            playSound('coin');
+          } else if (ob.type === 'missile') {
+            ob.status = 1;
+            ob.frame = 0;
+            ob.hasCollided = true;
+            playSound('boom');
+            if (otter.status !== 3) {
+              otter.isDead = true;
+              otter.isVisible = false;
+              explodeCount = 0;
+            } else {
+              score += 200;
+            }
+          } else if (ob.type === 'fish') {
+            ob.status = 1;
+            ob.hasCollided = true;
+            otter.status = 3;
+            otter.frame = 0;
+            invincibleCheck = 0;
+            playSound('powerup');
+          }
+        }
+      }
+
+      if (ob.type === 'missile') {
+        ob.x -= ob.vx;
+      } else if (ob.type === 'coin') {
+        if (ob.y < 298) ob.y += (ob.vy || 0);
+        else ob.vy = 0;
+        if (ob.y > 50) ob.x -= 10;
+      } else if (ob.type === 'fish') {
+        ob.x -= ob.vx;
+      }
+    }
+
+    // Invincibility
+    if (otter.status === 3) {
+      if (invincibleCheck === 0) invincibleCheck = score + 2000;
+      else if (score >= invincibleCheck) otter.status = 0;
+    }
+
+    score += 7;
+
+    obstacles = obstacles.filter(ob => ob.x > -120 && ob.y < GAME_H + 50);
+
+    if (otter.isDead) {
+      explodeCount++;
+      if (explodeCount >= 13) {
+        gameState = STATE_MENU;
+        hasPlayed = true;
+        pressing = false;
+      }
+    }
+  }
+
+  bgOffset += 10;
+}
+
+function draw() {
+  drawBackground();
+
+  if (gameState === STATE_MENU) {
+    drawMenu(hasPlayed);
+    if (hasPlayed) {
+      drawScore(score, false);
+    }
+  } else {
+    // Draw obstacles
+    for (const ob of obstacles) {
+      if (ob.type === 'missile') drawMissile(ob.x, ob.y, ob.status, ob.frame);
+      else if (ob.type === 'coin') drawCoin(ob.x, ob.y, ob.status, ob.frame);
+      else if (ob.type === 'fish') drawFish(ob.x, ob.y, ob.status, ob.frame);
+    }
+
+    // Otter
+    if (otter.isVisible) {
+      let drawStatus = otter.status;
+      if (otter.status !== 3) {
+        if (otter.vy > 0) {
+          drawStatus = otter.y > 280 ? 2 : 0;
+        } else if (otter.vy < 0) {
+          drawStatus = 1;
+        }
+      }
+      otter.frame = (otter.frame + 1) % (otter.status === 3 ? 4 : 2);
+      drawOtter(otter.x, otter.y, drawStatus, otter.frame);
+    }
+
+    // Advance obstacle frames
+    for (const ob of obstacles) {
+      if (ob.type === 'missile') {
+        if (ob.status === 0) ob.frame = (ob.frame + 1) % 2;
+        else if (ob.frame < 12) ob.frame++;
+      } else if (ob.type === 'coin') {
+        if (ob.status === 0) ob.frame = (ob.frame + 1) % 10;
+      } else if (ob.type === 'fish') {
+        if (ob.status === 0) ob.frame = (ob.frame + 1) % 5;
+      }
+    }
+
+    // Score
+    drawScore(score, true);
+
+    // Invincibility bar
+    if (otter.status === 3 && invincibleCheck > 0) {
+      const remaining = Math.max(0, invincibleCheck - score);
+      const pct = remaining / 2000;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(10, 6, 80, 8);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillRect(10, 6, 80 * pct, 8);
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(10, 6, 80, 8);
+    }
+
+    // Death flash
+    if (otter.isDead && explodeCount < 5) {
+      ctx.fillStyle = 'rgba(255, 100, 0, ' + (0.3 - explodeCount * 0.06) + ')';
+      ctx.fillRect(0, 0, GAME_W, GAME_H);
+    }
+  }
+}
+
+// --- LOADING SCREEN & START ---
+function drawLoadingScreen() {
+  ctx.fillStyle = '#0a1628';
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 32px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('OTTER SWAG', GAME_W / 2, 130);
+  ctx.fillStyle = '#88ccff';
+  ctx.font = '16px sans-serif';
+  ctx.fillText('Loading assets... ' + assetsLoaded + '/' + totalAssets, GAME_W / 2, 170);
+  ctx.textAlign = 'left';
+}
+
+// Show loading, then start
+const loadingInterval = setInterval(() => { drawLoadingScreen(); }, 100);
+
+loadAssets(() => {
+  clearInterval(loadingInterval);
+  setInterval(() => {
+    update();
+    draw();
+  }, 1000 / FPS);
+});
+</script>
+</body>
+</html>
